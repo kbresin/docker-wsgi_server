@@ -1,6 +1,7 @@
 #import cStringIO
 #import os
 import json
+import sqlite3
 
 def application(environ, start_response):
 	headers = []
@@ -8,6 +9,8 @@ def application(environ, start_response):
 	json_response = dict()
 	json_response['error_code'] = 0
 	http_status = '200 OK'
+	sqlite_file = '/db/fileshare_auth_db.sqlite'    # name of the sqlite database file
+
 
 	input = environ['wsgi.input']
 
@@ -34,6 +37,7 @@ def application(environ, start_response):
 #		print >> output
 
 	src_ip_header = 'HTTP_X_REAL_IP'
+	src_ip = ''
 	if src_ip_header in environ and environ['HTTP_X_REAL_IP'] != '':
 		src_ip = environ['HTTP_X_REAL_IP']
 		json_response['src_ip'] = src_ip
@@ -50,10 +54,7 @@ def application(environ, start_response):
 		post_input = input.read(content_length)
 		try:
 			json_vals = json.loads(post_input)
-			if secret_key in json_vals and json_vals[secret_key] != '':
-				json_response['secret_received'] = json_vals[secret_key]
-#				print >> output, "secret = %s" % json_vals[secret_key]
-			else:
+			if secret_key not in json_vals or json_vals[secret_key] == '':
 				# no secret defined in submitted json
 				json_response['error_code'] = 2
 				http_status = '400 Bad Request'
@@ -65,6 +66,19 @@ def application(environ, start_response):
 		# content length 0
 		json_response['error_code'] = 4
 		http_status = '400 Bad Request'
+
+	if json_response['error_code'] == 0:
+		conn = sqlite3.connect(sqlite_file)
+		c = conn.cursor()
+
+		check_admin_query = 'SELECT * FROM admin_auth WHERE src_ip= ? and shared_secret = ? LIMIT 1'
+		c.execute(check_admin_query, [src_ip, json_vals[secret_key]])
+		id_exists = c.fetchone()
+		if id_exists:
+			json_response['auth_ok'] = 1
+		else:
+			json_response['error_code'] = 5
+			http_status = '403 Forbidden'
 
 	if json_response['error_code'] != 0:
 		headers.append(('X-Error-Code', str(json_response['error_code'])))
